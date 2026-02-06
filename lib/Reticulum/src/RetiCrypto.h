@@ -1,6 +1,9 @@
 #pragma once
 #include "RetiCommon.h"
+
+// Monocypher v4 Unified Header
 #include <monocypher.h>
+
 #include "mbedtls/md.h"
 #include "mbedtls/aes.h"
 
@@ -49,6 +52,8 @@ public:
     static void genKeys(std::vector<uint8_t>& pub, std::vector<uint8_t>& priv) {
         pub.resize(32); priv.resize(32);
         for(int i=0; i<32; i++) priv[i] = (uint8_t)esp_random();
+        
+        // X25519 Key Generation (Monocypher API)
         crypto_x25519_public_key(pub.data(), priv.data());
     }
 
@@ -70,21 +75,6 @@ public:
         uint8_t ivc[16]; memcpy(ivc, iv.data(), 16);
         mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_ENCRYPT, padLen, ivc, in.data(), out.data());
         mbedtls_aes_free(&aes);
-        return out;
-    }
-
-    static std::vector<uint8_t> aes_decrypt(const std::vector<uint8_t>& key, const std::vector<uint8_t>& iv, const std::vector<uint8_t>& cipher) {
-        mbedtls_aes_context aes;
-        mbedtls_aes_init(&aes);
-        mbedtls_aes_setkey_dec(&aes, key.data(), 128);
-        std::vector<uint8_t> out(cipher.size());
-        uint8_t ivc[16]; memcpy(ivc, iv.data(), 16);
-        mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, cipher.size(), ivc, cipher.data(), out.data());
-        mbedtls_aes_free(&aes);
-        if(!out.empty()) {
-            uint8_t pad = out.back();
-            if(pad <= 16 && pad <= out.size()) out.resize(out.size()-pad);
-        }
         return out;
     }
 };

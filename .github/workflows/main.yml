@@ -1,0 +1,85 @@
+name: RNS-C Build & Release
+
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Compile Firmware
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+
+      - name: Compile & Merge
+        run: pio run
+        
+      - name: Verify Output
+        id: verify
+        run: |
+          if [ -f ".pio/build/heltec_wifi_lora_32_V3/firmware_merged.bin" ]; then
+            echo "::notice::Binary build successful"
+            echo "firmware_path=.pio/build/heltec_wifi_lora_32_V3/firmware_merged.bin" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Merged binary not found! Check merge_bin.py"
+            exit 1
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware_merged.bin
+          path: ${{ steps.verify.outputs.firmware_path }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: success()
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware_merged.bin
+
+      - name: Generate Release Tag
+        id: tag
+        run: |
+          # Generates a version like v0.2.45 based on the run number
+          echo "release_tag=v0.2.${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          name: RNS-C Firmware ${{ steps.tag.outputs.release_tag }}
+          files: firmware_merged.bin
+          generate_release_notes: true
+          body: |
+            ## 🚀 New Build
+            **Commit:** ${{ github.sha }}
+            
+            ### 📦 Installation
+            1. Download `firmware_merged.bin`
+            2. Go to [Espressif Web Tool](https://espressif.github.io/esptool-js/)
+            3. Flash at offset `0x0`

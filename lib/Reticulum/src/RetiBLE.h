@@ -1,13 +1,19 @@
 #pragma once
 #include <NimBLEDevice.h>
 #include "RetiInterface.h"
+
 namespace Reticulum {
+
 class BLEInterface : public Interface, public NimBLEServerCallbacks, public NimBLECharacteristicCallbacks {
     NimBLECharacteristic *pTx, *pRx;
     bool connected = false;
-    std::vector<uint8_t> buf; bool esc=false;
+    std::vector<uint8_t> buf; 
+    bool esc=false;
+
 public:
-    BLEInterface() : Interface("BLE") {}
+    // FIX: Added MTU 500 (Standard Sideband/NUS MTU)
+    BLEInterface() : Interface("BLE", 500) {}
+
     void begin() {
         NimBLEDevice::init("RNS Node");
         NimBLEServer* pServer = NimBLEDevice::createServer();
