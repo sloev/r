@@ -9,6 +9,7 @@
 #include "RetiSerial.h"
 #include "RetiBLE.h"
 #include "RetiWiFi.h"
+#include "RetiESPNow.h" // Added
 #include "RetiStorage.h"
 #include "RetiRouter.h"
 #include "RetiConfig.h"

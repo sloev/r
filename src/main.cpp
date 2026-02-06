@@ -4,7 +4,6 @@
 #include "BoardConfig.h"
 #include "Reti.h"
 
-// Hardware
 SX1262 radio = new Module(PIN_LORA_NSS, PIN_LORA_DIO1, PIN_LORA_RST, PIN_LORA_BUSY);
 
 Reticulum::Identity* id;
@@ -13,6 +12,7 @@ Reticulum::LoRaInterface* lora;
 Reticulum::SerialInterface* usb;
 Reticulum::BLEInterface* ble;
 Reticulum::WiFiDriver* wifi;
+Reticulum::ESPNowInterface* espnow;
 Reticulum::Router* router;
 
 void IRAM_ATTR setRx() { if(lora) lora->setFlag(); }
@@ -34,11 +34,15 @@ void setup() {
     ble = new Reticulum::BLEInterface(); ble->begin();
     wifi = new Reticulum::WiFiDriver(); wifi->begin(config);
     
+    // Init ESP-NOW
+    espnow = new Reticulum::ESPNowInterface(); espnow->begin();
+    
     router = new Reticulum::Router(id);
     router->addInterface(lora);
     router->addInterface(usb);
     router->addInterface(ble);
     router->addInterface(wifi);
+    router->addInterface(espnow);
     router->storage.begin();
     
     router->sendAnnounce();

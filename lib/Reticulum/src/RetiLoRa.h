@@ -8,7 +8,8 @@ class LoRaInterface : public Interface {
     volatile bool rxFlag = false;
 
 public:
-    LoRaInterface(SX1262* r) : Interface("LoRa"), radio(r) {}
+    // MTU 255 triggers split logic for 500-byte packets
+    LoRaInterface(SX1262* r) : Interface("LoRa", 255), radio(r) {}
 
     bool begin(float freq) {
         int state = radio->begin(freq, 125.0, 9, 5, 0x12, 22, 8);

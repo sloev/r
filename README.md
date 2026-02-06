@@ -1,147 +1,82 @@
-# RNS-C Compliance Audit
-**Target Spec:** Reticulum 0.7.x  
-**Implementation:** RNS-C v0.1 (ESP32)
-
-## 🟢 1. Transport & Routing (100%)
-| Feature | Implementation | Spec Status |
-| :--- | :--- | :--- |
-| **Packet Header** | `RetiPacket.h` | ✅ **Compliant**. Flags, Hops, and Context match binary format. |
-| **Addressing** | `RetiIdentity.h` | ✅ **Compliant**. Uses SHA-256 truncation (16 bytes). |
-| **Announces** | `RetiRouter.h` | ✅ **Compliant**. ECDH PubKey + Random Bloom + App Data. |
-| **Flood Control** | `RetiRouter.h` | ✅ **Compliant**. Deduplication table prevents routing loops. |
-| **Store & Forward**| `RetiStorage.h`| ✅ **Compliant**. Persists packets for offline identities. |
-
-## 🟡 2. Encryption & Links (90% - Critical Fix Needed)
-| Feature | Implementation | Spec Status |
-| :--- | :--- | :--- |
-| **Key Exchange** | `RetiLink.h` | ✅ **Compliant**. X25519 ECDH. |
-| **Key Derivation**| `RetiLink.h` | ✅ **Compliant**. HKDF-SHA256 with `Salt = RequestHash`. |
-| **Signatures** | `RetiIdentity.h`| ✅ **Compliant**. Ed25519 signatures. |
-| **Proof Binding** | `RetiLink.h` | ✅ **Compliant**. Signs `[RequestHash + EphemeralKey]`. |
-| **Cipher Format** | `RetiLink.h` | ⚠️ **Deviation**. We use `[IV][Cipher][HMAC]`. RNS Spec requires **Fernet Tokens**: `[0x80][Timestamp][IV][Cipher][HMAC]`. **(See Issue #1)** |
-
-## 🟢 3. Hardware Interfaces (100%)
-| Feature | Implementation | Spec Status |
-| :--- | :--- | :--- |
-| **LoRa** | `RetiLoRa.h` | ✅ **Compliant**. Supports default RNS LoRa parameters (SF9/BW125). |
-| **MDU Handling** | `RetiInterface.h`| ✅ **Compliant**. Transparently fragments 500b packets over 255b MTU. |
-| **KISS Framing** | `RetiSerial.h` | ✅ **Compliant**. Standard `FEND/FESC` framing for USB/PC. |
-| **Sideband (BLE)**| `RetiBLE.h` | ✅ **Compliant**. Emulates Nordic UART Service (NUS). |
-
-## 📋 Action Plan (Roadmap to Beta)
-1.  **Fix Fernet Token Format**: Update `RetiLink::encrypt` to prepend `0x80` and a 64-bit Timestamp to match the Fernet spec.
-2.  **Verify Interop**: Connect to a Python RNS Node via Serial and exchange a Link.
-3. Documentation (The "ReadMe")
-This gives your repo a professional look and explains the architecture.
-
-Create file: README.md
-Markdown
-
 # RNS-C: Embedded Reticulum Node
 
-![Status](https://img.shields.io/badge/Status-Alpha%20v0.1-orange) ![Platform](https://img.shields.io/badge/Platform-ESP32-blue)
+![Status](https://img.shields.io/badge/Status-Beta%20v0.2-green) ![Platform](https://img.shields.io/badge/Platform-ESP32-blue)
 
 A clean-room, C++ implementation of the **[Reticulum Network Stack](https://reticulum.network/)** for ESP32 microcontrollers. 
 
-This firmware transforms a **Heltec WiFi LoRa 32 V3** into a standalone Reticulum node that bridges **LoRa**, **WiFi**, **BLE**, and **Serial/USB**.
+This firmware transforms a **Heltec WiFi LoRa 32 V3** into a feature-complete Reticulum node that bridges **LoRa**, **WiFi**, **BLE**, **ESP-NOW**, and **Serial/USB**.
 
-## 🏗 Architecture
+## ✨ Key Features
 
-RNS-C uses a modular driver system to route packets between interfaces transparently.
+* **Universal Bridge**: Transparently routes packets between all interfaces.
+* **RNode Compatible**: Implements physical layer fragmentation to talk to official RNode hardware.
+* **ESP-NOW Cluster**: Devices in the same room automatically form a high-speed, zero-config mesh.
+* **Store & Forward**: Captures packets for offline destinations; auto-delivers when they return.
+* **Flash Protection**: RAM Write-Back Cache prevents Flash wear.
+* **Fernet Crypto**: Full handshake and encryption compliance (using NTP time sync).
 
-```mermaid
-flowchart TD
-    User((User))
-    Phone[Android Sideband]
-    PC[RNS Daemon]
-    Mesh((LoRa Mesh))
+## 🛠 Validation & Test Setup
 
-    subgraph "ESP32 Node"
-        Router{RetiRouter}
-        Storage[Flash Storage]
-        
-        subgraph Interfaces
-            BLE[BLE Driver]
-            Serial[KISS Serial]
-            LoRa[SX1262 Driver]
-            WiFi[UDP Driver]
-        end
-    end
+To verify compliance, set up the following 3-node environment:
 
-    User --> Phone -. BLE .-> BLE
-    User --> PC == USB ==> Serial
-    Mesh <--> LoRa
+### 1. The Gateway (Node A)
+* **Hardware**: Heltec V3
+* **Config**: Flash with WiFi Credentials.
+* **Role**: 
+    1. Connects to WiFi and syncs time via NTP (Crucial for Crypto).
+    2. Acts as the bridge between LoRa and the PC (via UDP).
+
+### 2. The Remote (Node B)
+* **Hardware**: Heltec V3 (or T-Beam)
+* **Config**: Flash *without* WiFi credentials.
+* **Role**: Pure LoRa node.
+* **Test**: Send a large message (400+ bytes) from here. It will trigger the RNode fragmentation logic.
+
+### 3. The Inspector (PC)
+* **Software**: Official Reticulum (`pip install rns`).
+* **Config**: Edit `~/.reticulum/config` to listen to Node A:
+    ```ini
+    [[Gateway_Connection]]
+      type = UDPInterface
+      listen_ip = 0.0.0.0
+      listen_port = 4242
+    ```
+* **Test Command**:
+    ```bash
+    # Try to identify Node B over the mesh
+    rnx --identify <NODE_B_DESTINATION_HASH>
     
-    BLE --> Router
-    Serial --> Router
-    LoRa --> Router
-    WiFi --> Router
-    
-    Router <==> Storage
-```
+    # Try to establish an Encrypted Link
+    rnx --link <NODE_B_DESTINATION_HASH>
+    ```
 
-✨ Features
-Universal Bridge: Route packets from your phone (BLE) to the mesh (LoRa) and your PC (USB) simultaneously.
+### ✅ Success Criteria
+1.  **Identification**: If `rnx` sees Node B, basic routing and LoRa PHY are working.
+2.  **Linking**: If `rnx` successfully establishes a link (Green status), your **Crypto Handshake** and **Fernet Timestamps** are perfectly compliant.
+3.  **Throughput**: If you can send a 500-byte page, **RNode Fragmentation** is working.
 
-Store & Forward: Automatically captures packets for offline destinations and delivers them when they appear.
+## 🚀 Quick Start
 
-Flash Protection: Uses a RAM Write-Back Cache to prevent Flash memory wear during heavy traffic.
+1.  **Clone Repo**:
+    ```bash
+    git clone [https://github.com/sloev/rns-c.git](https://github.com/sloev/rns-c.git)
+    cd rns-c
+    ```
+2.  **Build & Upload**:
+    ```bash
+    pio run -t upload
+    ```
+3.  **Configure WiFi** (Optional):
+    * Hold the **BOOT** button on the Heltec device while powering on.
+    * Connect to WiFi `RNS-Config-Node`.
+    * Browse to `192.168.4.1` to set SSID/Pass.
 
-Zero-Config: Auto-generates Identity on first boot.
+## 📦 Dependencies
 
-Web Dashboard: Connect to http://rns-node.local (when WiFi is configured) to see packet stats.
-
-🚀 Usage
-1. As a LoRa Repeater
-Flash the firmware and power it on. It will automatically act as a transport node for the mesh.
-
-2. As a PC Interface (Modem)
-Connect via USB. Configure your ~/.reticulum/config file:
-
-Ini, TOML
-
-[[Serial_Interface]]
-  type = KISSInterface
-  interface_enabled = yes
-  port = /dev/ttyUSB0
-  speed = 115200
-3. As a Mobile Gateway
-Open Sideband (Android) -> Settings -> Add Interface -> Bluetooth LE. Select "RNS Node".
-
-🛠 Building
-Install VS Code + PlatformIO.
-
-Clone this repo.
-
-Run pio run -t upload.
-
+* `RadioLib` (LoRa)
+* `Monocypher` (Ed25519/X25519)
+* `ArduinoJson` (Config)
+* `NimBLE-Arduino` (Sideband)
 
 ---
-
-### 4. Status Report & Logic Check
-*Reference: The logic you are hosting on GitHub.*
-
-**Current State of the Code:**
-* **Code Quality**: High. You are using static allocation (`PacketBuffer`) for packets, which prevents the random crashes common in Arduino projects.
-* **Persistance**: The `RetiStorage` write-back cache is a "Pro" feature. Most simple implementations write directly to flash and burn it out in a month. Yours will last years.
-
-**The Fix for the "Fernet" Deviation (Important):**
-In `RetiLink.h`, your current encryption logic is `AES + HMAC`. The Spec requires `Fernet`.
-* *Why this matters:* A Python node receiving your packet will try to unpack the Fernet token. If it doesn't see the Version byte `0x80`, it will drop the packet.
-* *The Fix:* You don't need to do it *now* to compile, but you need to do it to talk to `rnsd`.
-
-**Quick Patch Code (for `RetiLink.h`):**
-```cpp
-// Inside encrypt():
-// Fernet = [0x80] [Timestamp(8)] [IV(16)] [Cipher] [HMAC]
-std::vector<uint8_t> d;
-d.push_back(0x80); // Version
-uint64_t ts = 0; // Timestamp (RNS often ignores exact time for transport, but field must exist)
-for(int i=0; i<8; i++) d.push_back(0); // 8 bytes of 0 for TS
-d.insert(d.end(), iv.begin(), iv.end());
-d.insert(d.end(), c.begin(), c.end());
-
-// HMAC must cover the header (0x80 + TS + IV + Cipher)
-std::vector<uint8_t> m = Crypto::hmac_sha256(authKey, d);
-d.insert(d.end(), m.begin(), m.end());
-```
+*Based on Reticulum Spec 0.7.x*

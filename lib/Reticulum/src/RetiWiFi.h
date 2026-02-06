@@ -9,12 +9,17 @@ class WiFiDriver : public Interface {
     WiFiUDP udp;
     bool active = false;
 public:
-    WiFiDriver() : Interface("WiFi_UDP") {}
+    // MTU 1200 is standard for RNS UDP
+    WiFiDriver() : Interface("WiFi_UDP", 1200) {}
     
     void begin(Config& cfg) {
         if(cfg.networks.empty()) return;
         WiFi.mode(WIFI_STA);
         for(auto& n : cfg.networks) WiFi.begin(n.ssid.c_str(), n.pass.c_str());
+        
+        // Start NTP to fix Fernet Timestamps
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+        
         udp.begin(4242);
         active = true;
     }

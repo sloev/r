@@ -1,66 +1,86 @@
 #pragma once
 #include "RetiCommon.h"
-#include <map>
 #include <functional>
+#include <map>
 
 namespace Reticulum {
-
-const uint8_t FRAG_MAGIC = 0xBB;
-const size_t HW_MTU = 240; 
 
 class Interface {
 protected:
     struct FragState {
-        uint8_t total;
-        uint8_t count;
         unsigned long ts;
-        std::map<uint8_t, std::vector<uint8_t>> parts;
+        std::vector<uint8_t> buffer;
     };
-    std::map<uint8_t, FragState> frags;
+    // Map Sequence Number -> Fragment State
+    std::map<uint8_t, FragState> reassemblyMap;
 
 public:
     String name;
+    size_t mtu;
     std::function<void(const std::vector<uint8_t>&, Interface*)> onPacket;
 
-    Interface(String n) : name(n) {}
+    Interface(String n, size_t m) : name(n), mtu(m) {}
     virtual void sendRaw(const std::vector<uint8_t>& data) = 0;
 
     void send(const std::vector<uint8_t>& packet) {
-        if (packet.size() <= HW_MTU) {
+        // RNode Logic:
+        // Small packets are sent raw.
+        // Large packets (> MTU) are split into two frames with a 1-byte header.
+        // Header: [ Seq (4 bits) | SplitFlag (4 bits) ]
+        // We use Bit 0 as "Is First Fragment".
+        
+        if (packet.size() <= mtu) {
             sendRaw(packet);
         } else {
-            // Fragment
-            uint8_t ref = esp_random() & 0xFF;
-            uint8_t total = (packet.size() + HW_MTU - 1) / HW_MTU;
-            for(uint8_t i=0; i<total; i++) {
-                size_t offset = i * HW_MTU;
-                size_t len = min(HW_MTU, packet.size() - offset);
-                std::vector<uint8_t> f = {FRAG_MAGIC, total, ref, i};
-                f.insert(f.end(), packet.begin()+offset, packet.begin()+offset+len);
-                sendRaw(f);
-                delay(10); // Small airtime gap
-            }
+            // Split into 2 parts
+            uint8_t seq = esp_random() & 0x0F;
+            size_t splitPoint = mtu - 1; // Reserve 1 byte for header
+            
+            // Part 1: Header (Seq | 0x01) + Data
+            std::vector<uint8_t> p1; 
+            p1.push_back((seq << 4) | 0x01); // 0x01 = First Part
+            p1.insert(p1.end(), packet.begin(), packet.begin() + splitPoint);
+            sendRaw(p1);
+            
+            delay(25); // Allow airtime clearing
+            
+            // Part 2: Header (Seq | 0x00) + Data
+            std::vector<uint8_t> p2;
+            p2.push_back((seq << 4) | 0x00); // 0x00 = Last Part
+            p2.insert(p2.end(), packet.begin() + splitPoint, packet.end());
+            sendRaw(p2);
         }
     }
 
     void receive(const std::vector<uint8_t>& data) {
-        if(data.size() > 4 && data[0] == FRAG_MAGIC) {
-            uint8_t total=data[1], ref=data[2], seq=data[3];
-            FragState& s = frags[ref];
-            s.total = total; s.ts = millis();
-            
-            if(s.parts.find(seq) == s.parts.end()) {
-                s.parts[seq] = std::vector<uint8_t>(data.begin()+4, data.end());
-                s.count++;
+        if (data.empty()) return;
+        
+        // Check for Split Header
+        // Heuristic: RNode splits are usually max-length. 
+        // If we see a weird header on a short packet, assume it's just data.
+        
+        uint8_t header = data[0];
+        uint8_t seq = (header >> 4) & 0x0F;
+        bool isSplitStart = (header & 0x01) == 1;
+        
+        // RNode Logic: If Part 1, it must be exactly MTU sized (filled frame)
+        if (isSplitStart && data.size() == mtu) {
+            // Start Reassembly
+            FragState& fs = reassemblyMap[seq];
+            fs.ts = millis();
+            fs.buffer.assign(data.begin() + 1, data.end());
+        } 
+        else if (!isSplitStart && reassemblyMap.count(seq)) {
+            // Found Part 2 matching Sequence
+            FragState& fs = reassemblyMap[seq];
+            if (millis() - fs.ts < 3000) { // 3s Reassembly Timeout
+                fs.buffer.insert(fs.buffer.end(), data.begin() + 1, data.end());
+                // Packet Complete - Pass Up
+                if (onPacket) onPacket(fs.buffer, this);
             }
-            
-            if(s.count == total) {
-                std::vector<uint8_t> full;
-                for(int i=0; i<total; i++) full.insert(full.end(), s.parts[i].begin(), s.parts[i].end());
-                if(onPacket) onPacket(full, this);
-                frags.erase(ref);
-            }
+            reassemblyMap.erase(seq);
         } else {
+            // Standard Packet (Not part of a split we are tracking)
             if(onPacket) onPacket(data, this);
         }
     }
