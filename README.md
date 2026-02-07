@@ -1,55 +1,44 @@
-# RNS-C
+# RNS-C: Embedded Reticulum Stack (Heltec V3)
 
-Native C++ implementation of the [Reticulum Network Stack](https://reticulum.network/) for the ESP32 architecture.
+![License](https://img.shields.io/badge/License-MIT-orange)
 
-## Specifications
+A bare-metal C++ implementation of the **Reticulum Network Stack (v1.1.3)** for ESP32-S3. 
 
-* **Platform**: Espressif ESP32 (Xtensa LX6/LX7)
-* **Target Board**: Heltec WiFi LoRa 32 V3 (SX1262)
-* **Compliance**: RNS v0.7.x
-* **License**: MIT
+> "Security is not a library you download. It's a process you own."
 
-## Interfaces
+## 🏗️ Architecture
+* **Kernel:** FreeRTOS (via Arduino Framework).
+* **Cryptography:** **Vendored Monocypher 4.0.2** (Ed25519/X25519/Chacha20). No external crypto dependencies.
+* **Storage:** LittleFS (Crash-safe persistence for Identities and Config).
+* **Interfaces:** LoRa (SX1262), WiFi (UDP), ESP-NOW (Cluster), Serial (KISS).
 
-| Interface | Protocol | MTU | Details |
-| :--- | :--- | :--- | :--- |
-| **LoRa** | RNode PHY | 255 | Automatic fragmentation for 500b MDU. |
-| **Serial** | KISS | 500 | `115200 8N1`. Compatible with `rnsd`. |
-| **BLE** | NUS | 500 | Nordic UART Service. UUID `6E400001...`. |
-| **WiFi** | RNS/UDP | 1200 | UDP Broadcast on Port 4242. |
-| **ESP-NOW** | Raw | 250 | Cluster transport. Auto-channel sync. |
+## 🚀 Quick Start
+1.  **Download:** Grab `firmware_merged.bin` from Releases.
+2.  **Flash:** Use [Espressif Web Tool](https://espressif.github.io/esptool-js/).
+    * Baud: `921600`
+    * Offset `0x0000`: `firmware_merged.bin`
+3.  **Join:** The device defaults to `867.2 MHz` (EU868).
 
-## Build
+## 🛠️ Compilation 
+We do not rely on hidden registry magic for core components.
 
 ```bash
-# Requirements: PlatformIO
-pio run -t upload
+# 1. Clone the repo (contains vendored crypto)
+cd rns-c
+
+# 2. Build 
+# This compiles the vendored lib/Monocypher sources directly.
+pio run
+
+# 3. Flash & Monitor
+pio run -t upload -t monitor
 ```
 
-## Usage
-Autonomous Repeater
-Power on. The node automatically generates an Identity (/id.key) and bridges packets between all active interfaces using flood routing with SHA-256 deduplication.
+## 🐛 Debugging & Panic Recovery
+Serial Output: 115200 baud.
 
-USB Modem (rnsd)
-Connect via USB.
+Panic Mode: If critical hardware (SPI/Flash) fails, the LED blinks rapidly (5Hz). The watchdog will reset the device after 10s to attempt self-recovery.
 
-```Ini, TOML
-
-[[Serial_Interface]]
-  type = KISSInterface
-  port = /dev/ttyUSB0
-  speed = 115200
-```
-
-## Encryption Support
-
-* Primitives: X25519, Ed25519, AES-128-CBC, HMAC-SHA256, HKDF.
-* Token: Standard Fernet spec (0x80 versioning).
-* Time: NTP synchronization via WiFi required for valid Fernet timestamps. Fallback to 0 if offline.
-
-## Flash Storage
-
-Packets destined for offline nodes are cached in RAM. If RAM pressure exceeds 512 entries, or upon shutdown, packets are flushed to LittleFS.
 
 ## Copyright:
 

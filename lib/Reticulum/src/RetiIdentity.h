@@ -1,53 +1,69 @@
 #pragma once
 #include "RetiCrypto.h"
 #include <LittleFS.h>
+#include <vector>
+#include <Arduino.h>
 
 namespace Reticulum {
+
 class Identity {
 private:
     std::vector<uint8_t> seed;       // 32 bytes (Persisted to disk)
-    std::vector<uint8_t> privateKey; // 64 bytes (Expanded in RAM)
-    std::vector<uint8_t> publicKey;  // 32 bytes
-    std::vector<uint8_t> address;    // 16 bytes
+    std::vector<uint8_t> privateKey; // 64 bytes (Expanded Secret Key)
+    std::vector<uint8_t> publicKey;  // 32 bytes (Public Key)
+    std::vector<uint8_t> address;    // 16 bytes (RNS Address)
 
 public:
     Identity() {
         if(LittleFS.exists("/id.key")) {
             File f = LittleFS.open("/id.key", "r");
-            seed.resize(32);
-            f.read(seed.data(), 32);
-            f.close();
-            RNS_LOG("Identity Loaded.");
+            if(f && f.size() == 32) {
+                seed.resize(32);
+                f.read(seed.data(), 32);
+                f.close();
+                RNS_LOG("[ID] Loaded existing seed.");
+            } else {
+                RNS_LOG("[ID] Key file corrupt. Regenerating.");
+                generate();
+            }
         } else {
-            seed.resize(32);
-            for(int i=0; i<32; i++) seed[i] = (uint8_t)esp_random();
-            File f = LittleFS.open("/id.key", "w");
-            f.write(seed.data(), 32);
-            f.close();
-            RNS_LOG("New Identity Generated.");
+            RNS_LOG("[ID] No identity found. Generating new.");
+            generate();
         }
         derive();
     }
 
-    void derive() {
-        publicKey.resize(32);
-        privateKey.resize(64); // Expand seed to 64-byte secret
+    void generate() {
+        seed.resize(32);
+        // Use ESP32 Hardware RNG (True Random)
+        for(int i=0; i<32; i++) seed[i] = (uint8_t)esp_random();
         
-        // This function from your header generates the 64-byte secret and 32-byte public key from the 32-byte seed
-        // void crypto_ed25519_key_pair(uint8_t secret_key[64], uint8_t public_key[32], uint8_t seed[32]);
+        File f = LittleFS.open("/id.key", "w");
+        if(f) {
+            f.write(seed.data(), 32);
+            f.close();
+        }
+    }
+
+    void derive() {
+        // RNS Spec v1.1.3: Identity derivation
+        publicKey.resize(32);
+        privateKey.resize(64); 
+        
+        // 1. Expand 32-byte Seed -> 64-byte Ed25519 Secret + 32-byte Public
+        // Using vendored Monocypher v4
         crypto_ed25519_key_pair(privateKey.data(), publicKey.data(), seed.data());
         
+        // 2. Address = SHA256(PublicKey) truncated to 16 bytes
         std::vector<uint8_t> hash = Crypto::sha256(publicKey);
         address.assign(hash.begin(), hash.begin()+16);
     }
 
+    // Sign data using Ed25519 (Schnorr)
     std::vector<uint8_t> sign(const std::vector<uint8_t>& msg) {
         std::vector<uint8_t> sig(64);
-        
-        // Now we pass the 64-byte expanded private key
-        // void crypto_ed25519_sign(uint8_t signature[64], const uint8_t secret_key[64], const uint8_t *message, size_t message_size);
+        // Uses the expanded 64-byte secret key
         crypto_ed25519_sign(sig.data(), privateKey.data(), msg.data(), msg.size());
-        
         return sig;
     }
     
